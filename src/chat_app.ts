@@ -2,6 +2,8 @@ import dotenv from 'dotenv';
 import path from 'path/win32';
 import readline from 'readline';
 import { stdin as input, stdout as output } from 'node:process';
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 dotenv.config({ path: "C:\\Users\\karti\\Documents\\GenAI_typescript\\.env" });
 import { OpenAI } from 'openai';
 
@@ -10,6 +12,25 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 const context: string[] = [];
+
+// ===================== MCP Client Setup =====================
+const mcpClient = new Client({ name: "chat-app", version: "1.0.0" });
+const transport = new StdioClientTransport({
+    command: "npx",
+    args: ["tsx", "src/mcp/github-server.ts"],
+});
+await mcpClient.connect(transport);
+
+const { tools: mcpToolsList } = await mcpClient.listTools();
+const mcpToolNames = new Set(mcpToolsList.map(t => t.name));
+const mcpToolsForOpenAI = mcpToolsList.map(tool => ({
+    type: "function" as const,
+    name: tool.name,
+    description: tool.description ?? "",
+    parameters: tool.inputSchema as Record<string, unknown>,
+    strict: false,
+}));
+console.log("MCP tools loaded:", mcpToolsList.map(t => t.name).join(", "));
 // =========================Tools ========================
 async function getWeather(city: string) {
   const geoResponse = await fetch(
@@ -71,6 +92,7 @@ const tools = [
         },
         strict: false,
     },
+    ...mcpToolsForOpenAI,
 ];
 
 
@@ -121,6 +143,29 @@ async function run(query: string = "Hello, world!") {
         });
 
         console.log(toolResponse.output_text);
+      } else if (mcpToolNames.has(item.name)) {
+        const args = JSON.parse(item.arguments);
+        console.log(`Calling MCP tool '${item.name}' with:`, args);
+
+        const mcpResult = await mcpClient.callTool({ name: item.name, arguments: args });
+        const toolOutput = (mcpResult.content as Array<{ type: string; text?: string }>)
+          .filter(c => c.type === "text")
+          .map(c => c.text ?? "")
+          .join("\n");
+
+        const toolResponse = await openai.responses.create({
+          model: "gpt-4o-mini",
+          previous_response_id: response.id,
+          input: [
+            {
+              type: "function_call_output",
+              call_id: item.call_id,
+              output: toolOutput,
+            },
+          ],
+        });
+
+        console.log(toolResponse.output_text);
       }
     }
   }
@@ -156,4 +201,5 @@ while (true) {
 }
 
 rl.close();
+await mcpClient.close();
 // run("kartik is Best AI developer in the world").catch(console.error);
