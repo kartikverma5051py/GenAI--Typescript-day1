@@ -11,23 +11,47 @@ const openai = new OpenAI({
 });
 const context: string[] = [];
 // =========================Tools ========================
-async function getWeather(city: String): Promise<string> {
-    const getResponse = await fetch(`https://gecoding-api.open-meteo.com/v1/search?name=${city}`);
-    const data = await getResponse.json();
-    if (data.results && data.results.length > 0) {
-        const { latitude, longitude } = data.results[0];
-        const weatherResponse = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`);
-        const weatherData = await weatherResponse.json();
-        return JSON.stringify({
-            city: city,
-            country: data.results[0].country,
-            temperature: weatherData.current_weather.temperature,
-            windspeed: weatherData.current_weather.windspeed,
-            humidity: weatherData.current_weather.humidity,
-        })
-    } else {
-        return `City ${city} not found.`;
-    }
+async function getWeather(city: string) {
+  const geoResponse = await fetch(
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1`
+  );
+
+  if (!geoResponse.ok) {
+    throw new Error(`Geocoding API failed: ${geoResponse.status}`);
+  }
+
+  const geoData = await geoResponse.json();
+
+  if (!geoData.results || geoData.results.length === 0) {
+    return {
+      error: `City not found: ${city}`,
+    };
+  }
+
+  const {
+    latitude,
+    longitude,
+    name,
+    country,
+  } = geoData.results[0];
+
+  const weatherResponse = await fetch(
+    `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,wind_speed_10m`
+  );
+
+  if (!weatherResponse.ok) {
+    throw new Error(`Weather API failed: ${weatherResponse.status}`);
+  }
+
+  const weatherData = await weatherResponse.json();
+
+  return {
+    city: name,
+    country,
+    temperature: weatherData.current.temperature_2m,
+    humidity: weatherData.current.relative_humidity_2m,
+    windSpeed: weatherData.current.wind_speed_10m,
+  };
 }
 
 const tools = [
